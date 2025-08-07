@@ -1,25 +1,34 @@
 import sqlite3
 
-conn = sqlite3.connect("dados_climaticos.db", check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS clima (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        temperatura REAL,
-        umidade REAL,
-        vento REAL,
-        enchente INTEGER, -- Pode ser a classe predita
-        predicted_probability REAL, -- Probabilidade predita
-        latitude REAL, -- Latitude da predição
-        longitude REAL, -- Longitude da predição
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP -- Data/hora da predição
-    )
-""")
-conn.commit()
+def criar_tabela_clima():
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
 
-def salvar_dados(temperatura, umidade, vento, enchente_predita_classe, probabilidade_predita, lat, lon):
+    # Adicione a coluna 'precipitacao'
     cursor.execute("""
-        INSERT INTO clima (temperatura, umidade, vento, enchente, predicted_probability, latitude, longitude, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    """, (temperatura, umidade, vento, enchente_predita_classe, probabilidade_predita, lat, lon))
+        CREATE TABLE IF NOT EXISTS clima (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            municipio TEXT NOT NULL,
+            data_hora TEXT NOT NULL,
+            temperatura REAL,
+            umidade REAL,
+            vento REAL,
+            precipitacao REAL,
+            enchente INTEGER
+        );
+    """)
+
     conn.commit()
+    conn.close()
+
+def inserir_dados_clima(municipio, data_hora, temperatura, umidade, vento, precipitacao, enchente):
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO clima (municipio, data_hora, temperatura, umidade, vento, precipitacao, enchente)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (municipio, data_hora, temperatura, umidade, vento, precipitacao, enchente))
+
+    conn.commit()
+    conn.close()

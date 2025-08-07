@@ -1,58 +1,52 @@
-# services/ensemble.py
-# ... (outras importações)
-import torch
-import numpy as np
-from fastapi import HTTPException
-from sklearn.exceptions import NotFittedError # Adicione este import
-from core.models import model, rf_model, xgb_model
-from core.database import salvar_dados
+import os, joblib, torch, numpy as np, sqlite3
+from core.models import rf_model, xgb_model, model as lstm_model
 from services.weather import get_weather_data
 
-def predict_ensemble(lat, lon):
-    # Verifica se as instâncias dos modelos existem
-    if rf_model is None or xgb_model is None or model is None:
-        raise HTTPException(status_code=500, detail="Um ou mais modelos não foram inicializados (são None).")
+# Este trecho de código foi removido:
+# from core.database import salvar_dados 
+# O código a seguir assume que os modelos já foram treinados e salvos.
+try:
+    lstm_model.load_state_dict(torch.load("modelo_lstm.pth"))
+    rf_model = joblib.load("modelo_rf.pkl")
+    xgb_model = joblib.load("modelo_xgb.pkl")
+    lstm_model.eval()
+except Exception as e:
+    print(f"Erro ao carregar modelos: {e}")
+    # Considerar uma estratégia de fallback ou erro fatal
 
-    # Verifica se os modelos RandomForest e XGBoost estão treinados
-    rf_trained = hasattr(rf_model, 'estimators_') and rf_model.estimators_ and len(rf_model.estimators_) > 0
-    xgb_trained = hasattr(xgb_model, '_Booster') and xgb_model._Booster is not None and hasattr(xgb_model, 'classes_') and xgb_model.classes_ is not None
+def predict_ensemble(municipio):
+    # Abertura da conexão com o banco de dados dentro da função
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
 
-    if not rf_trained:
-        raise HTTPException(status_code=503, detail="Modelo Random Forest não está treinado. Aguarde o treinamento ou forneça dados.")
-    if not xgb_trained:
-        raise HTTPException(status_code=503, detail="Modelo XGBoost não está treinado. Aguarde o treinamento ou forneça dados.")
-    # Para o modelo LSTM, o carregamento via load_state_dict é o principal.
-    # Se houver uma verificação específica de "treinado" para LSTM que você precise, adicione-a.
+    cursor.execute("SELECT latitude, longitude FROM municipios WHERE nome=?", (municipio,))
+    coords = cursor.fetchone()
+    conn.close() # Fechamos a conexão aqui para liberar recursos.
 
-    features = get_weather_data(lat, lon)
-    if features is None:
-        raise HTTPException(status_code=500, detail="Erro ao obter dados climáticos")
+    if not coords:
+        return {"error": "Município não encontrado"}
 
-    input_tensor = torch.tensor(np.array(features).reshape(1, 1, -1), dtype=torch.float32)
+    lat, lon = coords
+    weather_data = get_weather_data(lat, lon)
 
-    try:
-        with torch.no_grad():
-            lstm_pred_prob = model(input_tensor).item()
+    if weather_data is None:
+        return {"error": "Não foi possível obter dados climáticos"}
 
-        rf_pred_prob = rf_model.predict_proba([features])[0][1]
-        xgb_pred_prob = xgb_model.predict_proba([features])[0][1]
+    temp, humidity, wind, precipitation = weather_data
+    
+    # Prepara os dados para os modelos
+    data_rf_xgb = np.array([temp, humidity, wind, precipitation]).reshape(1, -1)
+    data_lstm = torch.tensor(data_rf_xgb.reshape(-1, 1, 4), dtype=torch.float32)
 
-    except NotFittedError as e:
-        print(f"ERRO DE PREDIÇÃO: Modelo não ajustado - {e}")
-        # Este erro é crucial e indica que um modelo carregado não está realmente pronto.
-        raise HTTPException(status_code=503, detail=f"Erro de predição: O modelo {type(e.estimator).__name__ if hasattr(e, 'estimator') else 'um modelo'} não está ajustado. Verifique os dados e o processo de treinamento.")
-    except Exception as e:
-        import traceback
-        print(f"ERRO INESPERADO DE PREDIÇÃO: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Erro inesperado durante a predição: {str(e)}")
+    # Previsões individuais
+    pred_rf = rf_model.predict_proba(data_rf_xgb)[0][1]
+    pred_xgb = xgb_model.predict_proba(data_rf_xgb)[0][1]
+    
+    with torch.no_grad():
+        lstm_model.eval()
+        pred_lstm = torch.sigmoid(lstm_model(data_lstm)).item()
 
-    final_pred_prob = 0.5 * lstm_pred_prob + 0.3 * rf_pred_prob + 0.2 * xgb_pred_prob
-    final_pred_class = int(final_pred_prob > 0.5)
+    # Combinação das previsões (ensemble)
+    pred_final = (pred_lstm * 0.5) + (pred_rf * 0.3) + (pred_xgb * 0.2)
 
-    if features:
-        salvar_dados(features[0], features[1], features[2], final_pred_class, final_pred_prob, lat, lon) 
-
-    return {
-        "enchente": bool(final_pred_class),
-        "probabilidade": round(float(final_pred_prob), 4)
-    }
+    return {"prediction": float(pred_final)}

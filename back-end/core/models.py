@@ -8,8 +8,8 @@ from .model_lstm import LSTMModel # Supondo que model_lstm.py está no mesmo dir
 
 # Instâncias iniciais (não treinadas ou com estrutura base)
 model = LSTMModel()
-rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
-xgb_model = xgb.XGBClassifier(eval_metric='logloss') # use_label_encoder removido
+rf_model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
+xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
 
 def carregar_modelos():
     global model, rf_model, xgb_model
