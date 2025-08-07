@@ -41,9 +41,9 @@ def treinar_modelo_lstm():
         X_teste = torch.tensor(np.array([d[:4] for d in teste]).reshape(-1, 1, 4), dtype=torch.float32)
         y_teste = torch.tensor(np.array([d[4] for d in teste]).reshape(-1, 1), dtype=torch.float32)
         
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
 
-        for _ in range(200):
+        for _ in range(100):
             optimizer.zero_grad()
             # OBSERVAÇÃO: Se você usar BCEWithLogitsLoss, remova a camada sigmoid do seu modelo.
             # O código original do seu `model_lstm.py` já tinha a função de ativação tanh na última camada.

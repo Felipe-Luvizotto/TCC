@@ -1,27 +1,28 @@
 import os, joblib, torch, numpy as np, sqlite3
+# A linha abaixo importa as instâncias globais dos modelos
 from core.models import rf_model, xgb_model, model as lstm_model
 from services.weather import get_weather_data
 
-# Este trecho de código foi removido:
-# from core.database import salvar_dados 
-# O código a seguir assume que os modelos já foram treinados e salvos.
-try:
-    lstm_model.load_state_dict(torch.load("modelo_lstm.pth"))
-    rf_model = joblib.load("modelo_rf.pkl")
-    xgb_model = joblib.load("modelo_xgb.pkl")
-    lstm_model.eval()
-except Exception as e:
-    print(f"Erro ao carregar modelos: {e}")
-    # Considerar uma estratégia de fallback ou erro fatal
+# O BLOCO DE CÓDIGO ABAIXO FOI REMOVIDO PARA EVITAR ERROS NA INICIALIZAÇÃO:
+# try:
+#     lstm_model.load_state_dict(torch.load("modelo_lstm.pth"))
+#     rf_model = joblib.load("modelo_rf.pkl")
+#     xgb_model = joblib.load("modelo_xgb.pkl")
+#     lstm_model.eval()
+# except Exception as e:
+#     print(f"Erro ao carregar modelos: {e}")
 
 def predict_ensemble(municipio):
+    # O predict_ensemble AGORA USA as instâncias globais de modelo
+    # que foram carregadas pelo `lifespan` na inicialização.
+
     # Abertura da conexão com o banco de dados dentro da função
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
 
     cursor.execute("SELECT latitude, longitude FROM municipios WHERE nome=?", (municipio,))
     coords = cursor.fetchone()
-    conn.close() # Fechamos a conexão aqui para liberar recursos.
+    conn.close() 
 
     if not coords:
         return {"error": "Município não encontrado"}
