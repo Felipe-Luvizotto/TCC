@@ -1,83 +1,83 @@
-import numpy as np, sqlite3, torch, joblib
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from core.models import model as lstm_model, rf_model, xgb_model # Importa as instâncias globais
+import numpy as np
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, matthews_corrcoef, roc_auc_score
+from core.models import lstm_model, rf_model, xgb_model # CORREÇÃO AQUI
+import torch
+import torch.nn.functional as F
 
-def get_evaluation_data(test_size=0.2):
-    # ... (código existente, sem alterações)
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT temperatura, umidade, vento, precipitacao, enchente FROM clima")
-    dados = cursor.fetchall()
-    conn.close()
-    
-    if not dados or len(dados) < 20:
-        return None, None
+def predict_lstm(data):
+    """Prevê usando o modelo LSTM."""
+    # A entrada para o LSTM precisa ser um tensor 3D
+    data_tensor = torch.tensor(np.expand_dims(data, axis=1), dtype=torch.float32)
+    with torch.no_grad():
+        output = lstm_model(data_tensor)
+        # Aplica sigmoide para converter logits em probabilidades
+        probabilities = F.sigmoid(output)
+        predictions = (probabilities > 0.5).int().flatten().numpy()
+    return predictions
 
-    np.random.shuffle(dados)
-    split_idx = int((1.0 - test_size) * len(dados))
+def run_ensemble_evaluation(X_teste, y_teste):
+    """
+    Avalia o desempenho de cada modelo individualmente e do ensemble.
+    """
+    print("DEBUG: Executando avaliação de modelos...")
+    if not (hasattr(rf_model, 'estimators_') and hasattr(xgb_model, '_Booster')):
+        print("INFO: Modelos não foram treinados. Não é possível avaliar.")
+        return None
     
-    dados_teste = dados[split_idx:]
+    metrics = {}
     
-    if not dados_teste:
-        return None, None
+    try:
+        # Previsões do Random Forest
+        rf_predictions = rf_model.predict(X_teste)
         
-    X_test = np.array([d[:4] for d in dados_teste])
-    y_test = np.array([d[4] for d in dados_teste])
-    
-    return X_test, y_test
-
-def run_ensemble_evaluation():
-    # O BLOCO ABAIXO FOI REMOVIDO para evitar duplicação do carregamento.
-    # try:
-    #     lstm_model.load_state_dict(torch.load("modelo_lstm.pth"))
-    #     rf_model = joblib.load("modelo_rf.pkl")
-    #     xgb_model = joblib.load("modelo_xgb.pkl")
-    #     lstm_model.eval()
-    # except Exception as e:
-    #     print(f"Erro ao carregar modelos para avaliação: {e}")
-    #     return
-
-    X_test, y_test = get_evaluation_data()
-    if X_test is None:
-        print("Avaliação não pode ser executada. Dados insuficientes.")
-        return
-
-    ensemble_predictions = []
-    
-    for i in range(len(X_test)):
-        data_point = X_test[i].reshape(1, -1)
+        # Previsões do XGBoost
+        xgb_predictions = xgb_model.predict(X_teste)
         
-        # Previsões individuais
-        pred_rf = rf_model.predict_proba(data_point)[0][1]
-        pred_xgb = xgb_model.predict_proba(data_point)[0][1]
+        # Previsões do LSTM
+        lstm_predictions = predict_lstm(X_teste)
+
+        # Previsões do Ensemble (voto majoritário)
+        ensemble_predictions = (rf_predictions + xgb_predictions + lstm_predictions >= 2).astype(int)
+
+        # Calcula métricas para cada modelo
+        metrics['RandomForest'] = {
+            'accuracy': accuracy_score(y_teste, rf_predictions),
+            'precision': precision_score(y_teste, rf_predictions, zero_division=0),
+            'recall': recall_score(y_teste, rf_predictions, zero_division=0),
+            'f1_score': f1_score(y_teste, rf_predictions, zero_division=0),
+            'matthews_corrcoef': matthews_corrcoef(y_teste, rf_predictions),
+            'auc_roc': roc_auc_score(y_teste, rf_predictions)
+        }
         
-        with torch.no_grad():
-            lstm_model.eval()
-            data_lstm = torch.tensor(data_point.reshape(-1, 1, 4), dtype=torch.float32)
-            pred_lstm = torch.sigmoid(lstm_model(data_lstm)).item()
-
-        # Combinação das previsões (ensemble)
-        pred_final = (pred_lstm * 0.5) + (pred_rf * 0.3) + (pred_xgb * 0.2)
+        metrics['XGBoost'] = {
+            'accuracy': accuracy_score(y_teste, xgb_predictions),
+            'precision': precision_score(y_teste, xgb_predictions, zero_division=0),
+            'recall': recall_score(y_teste, xgb_predictions, zero_division=0),
+            'f1_score': f1_score(y_teste, xgb_predictions, zero_division=0),
+            'matthews_corrcoef': matthews_corrcoef(y_teste, xgb_predictions),
+            'auc_roc': roc_auc_score(y_teste, xgb_predictions)
+        }
         
-        ensemble_predictions.append(1 if pred_final > 0.5 else 0)
+        metrics['LSTM'] = {
+            'accuracy': accuracy_score(y_teste, lstm_predictions),
+            'precision': precision_score(y_teste, lstm_predictions, zero_division=0),
+            'recall': recall_score(y_teste, lstm_predictions, zero_division=0),
+            'f1_score': f1_score(y_teste, lstm_predictions, zero_division=0),
+            'matthews_corrcoef': matthews_corrcoef(y_teste, lstm_predictions),
+            'auc_roc': roc_auc_score(y_teste, lstm_predictions)
+        }
+        
+        metrics['Ensemble'] = {
+            'accuracy': accuracy_score(y_teste, ensemble_predictions),
+            'precision': precision_score(y_teste, ensemble_predictions, zero_division=0),
+            'recall': recall_score(y_teste, ensemble_predictions, zero_division=0),
+            'f1_score': f1_score(y_teste, ensemble_predictions, zero_division=0),
+            'matthews_corrcoef': matthews_corrcoef(y_teste, ensemble_predictions),
+            'auc_roc': roc_auc_score(y_teste, ensemble_predictions)
+        }
+        
+        return metrics
 
-    ensemble_predictions = np.array(ensemble_predictions)
-
-    accuracy = accuracy_score(y_test, ensemble_predictions)
-    precision = precision_score(y_test, ensemble_predictions, zero_division=0)
-    recall = recall_score(y_test, ensemble_predictions, zero_division=0)
-    f1 = f1_score(y_test, ensemble_predictions, zero_division=0)
-
-    print("\n--- Avaliação do Ensemble ---")
-    print(f"Acurácia: {accuracy:.4f}")
-    print(f"Precisão: {precision:.4f}")
-    print(f"Recall: {recall:.4f}")
-    print(f"F1-Score: {f1:.4f}")
-    print("-----------------------------")
-
-    return {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1_score": f1
-    }
+    except Exception as e:
+        print(f"ERRO: Falha na avaliação do ensemble. Verifique os dados. Erro: {e}")
+        return None
