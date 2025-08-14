@@ -1,131 +1,187 @@
 import pandas as pd
+import glob
 import os
 import sqlite3
+import unidecode
 
-def consolidar_dados(pasta_inmet, arquivo_inundacao, arquivo_vulnerabilidade):
+def normalizar_nome_municipio(nome):
     """
-    Consolida os arquivos CSV em um único DataFrame e o salva em um banco de dados SQLite.
+    Normaliza o nome do município removendo acentos, convertendo para maiúsculas e
+    removendo espaços extras para garantir a correspondência correta.
     """
-    
-    # === 1. Ler, limpar e consolidar os arquivos CSV do INMET ===
+    if isinstance(nome, str):
+        return unidecode.unidecode(nome).upper().strip()
+    return None
+
+def processa_arquivos_inmet(pasta_inmet):
+    """
+    Lê e consolida todos os arquivos CSV do INMET em um único DataFrame.
+    """
     print("Iniciando a leitura e consolidação dos arquivos do INMET...")
     
     lista_dfs_inmet = []
-    caminho_pasta_inmet = os.path.join(os.path.dirname(__file__), 'dados', pasta_inmet)
     
-    # Mapeamento dos nomes de colunas originais para nomes simples e unificados
-    mapeamento_flexivel = {
-        # Mapeamentos para a coluna 'Precipitacao'
-        'PRECIPITAÇÃO TOTAL, HORÁRIO (mm)': 'Precipitacao',
-        'CHUVA': 'Precipitacao',
-        'CHUVA(mm)': 'Precipitacao',
-        
-        # Mapeamentos para a coluna 'Umidade'
-        'UMIDADE RELATIVA DO AR, HORARIA (%)': 'Umidade',
-        'UMIDADE RELATIVA DO AR (%)': 'Umidade',
-        
-        # Mapeamentos para a coluna 'Vento'
-        'VENTO, VELOCIDADE HORARIA (m/s)': 'Vento',
-        'VELOCIDADE DO VENTO, HORARIA (m/s)': 'Vento',
-
-        # Mapeamentos para a coluna 'Temperatura'
-        'TEMPERATURA DO AR - BULBO SECO, HORARIA (\xc2\xb0C)': 'Temperatura',
-        'TEMPERATURA DO AR (\xc2\xb0C)': 'Temperatura',
-        'TEMPERATURA DO AR (°C)': 'Temperatura',
-        'TEMP_AR': 'Temperatura',
-        'TEMPERATURA': 'Temperatura',
-        
-        # Mapeamentos para a coluna 'Data'
-        'DATA (YYYY-MM-DD)': 'Data',
-        'Data': 'Data',
-
-        # Mapeamentos para a coluna 'Hora'
-        'HORA (UTC)': 'Hora',
-        'Hora': 'Hora'
-    }
+    # Busca por arquivos com a extensão em maiúsculas ou minúsculas
+    arquivos_inmet = glob.glob(os.path.join(pasta_inmet, 'INMET_*.CSV')) + \
+                     glob.glob(os.path.join(pasta_inmet, 'INMET_*.csv'))
     
-    # Colunas que queremos no DataFrame final
-    colunas_finais = ['DataHora', 'Precipitacao', 'Umidade', 'Vento', 'Temperatura']
-    
-    for arquivo in os.listdir(caminho_pasta_inmet):
-        if arquivo.endswith('.CSV'):
-            caminho_arquivo = os.path.join(caminho_pasta_inmet, arquivo)
-            try:
-                # O INMET usa delimitador ';' e ponto para decimal
-                df = pd.read_csv(caminho_arquivo, sep=';', decimal=',', encoding='latin1', skiprows=8)
-                
-                # Normaliza os nomes das colunas (remove espaços extras)
-                df.columns = df.columns.str.strip()
-                
-                # Renomeia as colunas do DataFrame usando o mapeamento flexível
-                colunas_para_renomear = {}
-                for nome_origem, nome_destino in mapeamento_flexivel.items():
-                    if nome_origem in df.columns and nome_destino not in df.columns:
-                        colunas_para_renomear[nome_origem] = nome_destino
-                
-                df = df.rename(columns=colunas_para_renomear)
-                
-                # Verifica quais colunas estão presentes no arquivo e as renomeia para o formato final
-                colunas_presentes = [c for c in colunas_finais if c in df.columns]
-                
-                # Se 'Data' e 'Hora' estiverem presentes, unifica-as em 'DataHora'
-                if 'Data' in df.columns and 'Hora' in df.columns:
-                    df['DataHora'] = pd.to_datetime(df['Data'] + ' ' + df['Hora'], format='%Y-%m-%d %H:%M')
-                    colunas_presentes.append('DataHora')
-                
-                # Seleciona apenas as colunas de interesse
-                df_limpo = df[colunas_presentes].copy()
-                
-                # Garante que todas as colunas finais existam, preenchendo as faltantes com NaN
-                for col in colunas_finais:
-                    if col not in df_limpo.columns:
-                        df_limpo[col] = pd.NA
-                        
-                lista_dfs_inmet.append(df_limpo)
-                print(f"SUCESSO: Arquivo {arquivo} processado.")
+    if not arquivos_inmet:
+        print("AVISO: Nenhum arquivo INMET encontrado na pasta.")
+        return pd.DataFrame()
+        
+    for arquivo in arquivos_inmet:
+        try:
+            df = pd.read_csv(arquivo, sep=';', decimal=',', encoding='latin1', skiprows=8)
+            df.columns = df.columns.str.strip().str.upper()
+            
+            # Padronizando as colunas para facilitar a união
+            if 'CODIGO ESTACAO' in df.columns:
+                df = df.rename(columns={'CODIGO ESTACAO': 'CODIGOESTACAO'})
+            
+            # Adicionando a coluna de DataHora
+            if 'DATA (YYYY-MM-DD)' in df.columns and 'HORA (UTC)' in df.columns:
+                df['DATAHORA'] = pd.to_datetime(df['DATA (YYYY-MM-DD)'] + ' ' + df['HORA (UTC)'], format='%Y-%m-%d %H:%M')
+            
+            # Adiciona a coluna 'CodigoEstacao' se ainda não existir
+            if 'CODIGOESTACAO' not in df.columns:
+                nome_arquivo = os.path.basename(arquivo)
+                codigo_estacao = nome_arquivo.split('_')[2].strip() if len(nome_arquivo.split('_')) > 2 else ''
+                df['CODIGOESTACAO'] = codigo_estacao
+            
+            lista_dfs_inmet.append(df)
+            print(f"SUCESSO: Arquivo {os.path.basename(arquivo)} processado.")
 
-            except Exception as e:
-                print(f"ERRO: Falha ao ler ou processar o arquivo {arquivo}: {e}")
-                
+        except Exception as e:
+            print(f"ERRO ao processar o arquivo {os.path.basename(arquivo)}: {e}")
+            continue
+
     if not lista_dfs_inmet:
-        print("Nenhum arquivo do INMET foi lido. Verifique o caminho e o formato dos arquivos.")
-        return
-        
+        return pd.DataFrame()
+    
     df_inmet = pd.concat(lista_dfs_inmet, ignore_index=True)
     
-    # === 2. Ler e processar os arquivos CSV da ANA ===
-    print("Lendo arquivos da ANA...")
-    try:
-        caminho_ana_inundacao = os.path.join(os.path.dirname(__file__), 'dados', arquivo_inundacao)
-        caminho_ana_vulnerabilidade = os.path.join(os.path.dirname(__file__), 'dados', arquivo_vulnerabilidade)
+    # Renomeando colunas para um padrão unificado
+    df_inmet = df_inmet.rename(columns={
+        'PRECIPITAÇÃO TOTAL, HORÁRIO (MM)': 'PRECIPITACAO',
+        'UMIDADE RELATIVA DO AR, HORARIA (%)': 'UMIDADE',
+        'VENTO, VELOCIDADE HORARIA (M/S)': 'VENTO',
+        'TEMPERATURA DO AR - BULBO SECO, HORARIA (C)': 'TEMPERATURA'
+    })
+    
+    # Selecionando apenas as colunas relevantes
+    colunas_relevantes_inmet = ['CODIGOESTACAO', 'DATAHORA', 'PRECIPITACAO', 'UMIDADE', 'VENTO', 'TEMPERATURA']
+    df_inmet = df_inmet[df_inmet.columns.intersection(colunas_relevantes_inmet)]
+    
+    return df_inmet
 
-        df_inundacao = pd.read_csv(caminho_ana_inundacao, sep=';', encoding='latin1')
-        df_vulnerabilidade = pd.read_csv(caminho_ana_vulnerabilidade, sep=';', encoding='latin1')
-    except Exception as e:
-        print(f"Erro ao ler arquivos da ANA. Verifique o caminho e o formato. Erro: {e}")
-        return
+def processa_arquivos_ana(pasta_ana):
+    """
+    Lê os arquivos da ANA e retorna como DataFrames.
+    """
+    print("Lendo arquivos da ANA...")
+    caminho_inundacao = os.path.join(pasta_ana, 'ana_inundacao.csv')
+    caminho_vulnerabilidade = os.path.join(pasta_ana, 'ana_vulnerabilidade.csv')
+    
+    try:
+        df_inundacao = pd.read_csv(caminho_inundacao)
+        print("SUCESSO: Arquivo ana_inundacao.csv lido.")
+    except FileNotFoundError:
+        print(f"ERRO: Arquivo {caminho_inundacao} não encontrado.")
+        df_inundacao = None
+    
+    try:
+        df_vulnerabilidade = pd.read_csv(caminho_vulnerabilidade)
+        print("SUCESSO: Arquivo ana_vulnerabilidade.csv lido.")
+    except FileNotFoundError:
+        print(f"ERRO: Arquivo {caminho_vulnerabilidade} não encontrado.")
+        df_vulnerabilidade = None
+
+    return df_inundacao, df_vulnerabilidade
+
+def prepara_datasets_para_treinamento():
+    """
+    Função principal que orquestra o carregamento, união e salvamento dos datasets.
+    """
+    print("Iniciando o preparo dos datasets...")
+
+    pasta_dados = os.path.join(os.path.dirname(__file__), 'dados')
+    if not os.path.exists(pasta_dados):
+        print(f"ERRO CRÍTICO: Pasta '{pasta_dados}' não encontrada.")
+        return None
+
+    # --- 1. Carregar todos os arquivos necessários ---
+    # Caminho do arquivo de catálogo, nomeado de acordo com a sua correção anterior
+    caminho_catalogo = os.path.join(pasta_dados, 'catalogoestacoesautomaticas.csv')
+    
+    try:
+        df_catalogo = pd.read_csv(caminho_catalogo, delimiter=';', encoding='utf-8')
+        df_inundacao, _ = processa_arquivos_ana(pasta_ana=pasta_dados)
+    except FileNotFoundError as e:
+        print(f"ERRO CRÍTICO: Arquivo não encontrado: {e}")
+        return None
+
+    if df_inundacao is None:
+        return None
+
+    # --- 2. Normalizar e criar o mapeamento ---
+    df_catalogo['DC_NOME_NORMALIZADO'] = df_catalogo['DC_NOME'].apply(normalizar_nome_municipio)
+    df_inundacao['NM_MUNICIP_NORMALIZADO'] = df_inundacao['NM_MUNICIP'].apply(normalizar_nome_municipio)
+
+    mapeamento_estacao_municipio = pd.merge(
+        df_catalogo[['CD_ESTACAO', 'DC_NOME_NORMALIZADO']],
+        df_inundacao[['NM_MUNICIP_NORMALIZADO', 'CD_GEOCMU']].drop_duplicates(),
+        left_on='DC_NOME_NORMALIZADO',
+        right_on='NM_MUNICIP_NORMALIZADO',
+        how='inner'
+    )
+    
+    if mapeamento_estacao_municipio.empty:
+        print("ERRO CRÍTICO: Não foi possível criar o mapeamento. Verifique se os nomes dos municípios correspondem.")
+        return None
+
+    print("SUCESSO: Arquivo de mapeamento de estação INMET para código IBGE criado.")
+
+    # --- 3. Unir os dados do INMET com o mapeamento e a inundação da ANA ---
+    caminho_pasta_inmet = os.path.join(pasta_dados, 'inmet_data')
+    df_inmet = processa_arquivos_inmet(pasta_inmet=caminho_pasta_inmet)
+    if df_inmet.empty:
+        return None
         
-    df_inundacao['Enchente'] = 1
+    df_inmet_com_ibge = pd.merge(
+        df_inmet,
+        mapeamento_estacao_municipio,
+        left_on='CODIGOESTACAO',
+        right_on='CD_ESTACAO',
+        how='left'
+    )
     
+    df_final = pd.merge(
+        df_inmet_com_ibge,
+        df_inundacao[['CD_GEOCMU', 'CHEIAS_201']].drop_duplicates(),
+        on='CD_GEOCMU',
+        how='left'
+    )
     
-    # === 3. Unir os datasets ===
-    print("Unindo datasets...")
-    print("AVISO: A união entre os dados do INMET e da ANA não foi possível com as colunas atuais.")
-    print("O script vai continuar, mas o dataset final não terá informações de inundação.")
-    df_final = df_inmet.copy()
+    # Preenche valores de enchente onde não houve correspondência
+    df_final['CHEIAS_201'] = df_final['CHEIAS_201'].fillna(0)
+    df_final.rename(columns={'CHEIAS_201': 'ENCHENTE'}, inplace=True)
     
-    
-    # === 4. Salvar o dataset final no SQLite ===
+    print("SUCESSO: Datasets combinados com sucesso!")
+
+    # --- 4. Salvar o dataset final no SQLite ---
     print("Salvando o dataset final no banco de dados...")
-    conn = sqlite3.connect("database.db")
-    df_final.to_sql('clima_historico', conn, if_exists='replace', index=False)
+    conn = sqlite3.connect('dados_combinados.db')
+    df_final.to_sql('dataset_final', conn, if_exists='replace', index=False)
     conn.close()
     
-    print("Processo de consolidação concluído! Os dados estão na tabela 'clima_historico' no database.db.")
+    print("Dataset final salvo em 'dados_combinados.db'.")
+
+    return df_final
+
 
 if __name__ == '__main__':
-    pasta_do_inmet = 'inmet_data'
-    arquivo_da_ana_inundacao = 'ana_inundacao.csv'
-    arquivo_da_ana_vulnerabilidade = 'ana_vulnerabilidade.csv'
-    
-    consolidar_dados(pasta_do_inmet, arquivo_da_ana_inundacao, arquivo_da_ana_vulnerabilidade)
+    df_final = prepara_datasets_para_treinamento()
+    if df_final is not None:
+        print("\n--- VISUALIZAÇÃO DO DATASET FINAL ---")
+        print(df_final.head())
+        print("\nShape do dataset final:", df_final.shape)
