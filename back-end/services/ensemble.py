@@ -1,6 +1,7 @@
 import os, joblib, torch, numpy as np, sqlite3
 # A linha abaixo importa as instâncias globais dos modelos
-from core.models import rf_model, xgb_model, model as lstm_model
+from core.models import rf_model, xgb_model
+from core.treino_lstm import LSTMModel as lstm_model
 from services.weather import get_weather_data
 
 # O BLOCO DE CÓDIGO ABAIXO FOI REMOVIDO PARA EVITAR ERROS NA INICIALIZAÇÃO:

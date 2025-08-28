@@ -1,6 +1,9 @@
 python3 -m venv venv
 source venv/bin/activate
 pip install torch torchvision torchaudio numpy pandas scikit-learn fastapi uvicorn requests xgboost apscheduler unidecode
+pip freeze > requirements.txt
+Pip install -r requirements.txt
 export WEATHER_API_KEY="9afc53f9544d4a02a2e141129251102"
 python3 prepara_dados.py
+python3 treinamento_acelerado.py
 python3 main.py
