@@ -1,23 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-markercluster';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import './MapaBrasil.css'
+import './MapaBrasil.css';
 import axios from 'axios';
 import L from 'leaflet';
 import { Link } from 'react-router-dom';
 import { Bar, Line } from 'react-chartjs-2';
 import { Chart, registerables } from 'chart.js';
-import { Spinner } from 'react-bootstrap'; // Se você estiver usando react-bootstrap para o spinner
-import 'bootstrap/dist/css/bootstrap.min.css'; // Importe o CSS do Bootstrap
+import { Spinner } from 'react-bootstrap';
+import 'bootstrap/dist/css/bootstrap.min.css';
 
 Chart.register(...registerables);
 
-// Novo URL para o endpoint de estações
 const ESTACOES_URL = 'http://localhost:8000/estacoes/';
-
 const API_URL = 'http://localhost:8000/predict/';
 const EVALUATE_URL = 'http://localhost:8000/evaluate/';
 const HISTORY_API_URL = 'http://localhost:8000/predict/history/';
@@ -51,7 +49,7 @@ const greenIcon = new L.Icon({
 });
 
 const MapaBrasil = () => {
-  const [dados, setDados] = useState({});
+  const [estacoes, setEstacoes] = useState([]);
   const [municipioSelecionado, setMunicipioSelecionado] = useState(null);
   const [evaluationMetrics, setEvaluationMetrics] = useState(null);
   const [evaluationChartData, setEvaluationChartData] = useState(null);
@@ -60,21 +58,22 @@ const MapaBrasil = () => {
   const [predictionResult, setPredictionResult] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Alteração no useEffect para buscar os dados do novo endpoint
   useEffect(() => {
     // Busca dados das estações do backend
     axios.get(ESTACOES_URL)
       .then(response => {
-        const estacoesData = response.data.estacoes;
-        const dadosFormatados = {};
-        estacoesData.forEach(estacao => {
-          dadosFormatados[estacao.nome] = estacao;
-        });
-        setDados(dadosFormatados);
+        // Verifica se a resposta contém o array 'estacoes' e se é um array válido
+        if (Array.isArray(response.data.estacoes)) {
+          setEstacoes(response.data.estacoes);
+        } else {
+          console.error("A resposta da API de estações não é um array válido.");
+          setEstacoes([]); // Garante que o estado é um array vazio para evitar erros
+        }
         setLoading(false);
       })
       .catch(error => {
         console.error("Erro ao carregar dados das estações:", error);
+        setEstacoes([]);
         setLoading(false);
       });
       
@@ -90,6 +89,11 @@ const MapaBrasil = () => {
 
   useEffect(() => {
     if (evaluationMetrics) {
+      const ensembleMetrics = evaluationMetrics.Ensemble || {};
+      const rfMetrics = evaluationMetrics.Random_Forest || {};
+      const xgbMetrics = evaluationMetrics.XGBoost || {};
+      const lstmMetrics = evaluationMetrics.LSTM || {};
+
       const labels = ['Acurácia', 'Precisão', 'Recall', 'F1-Score'];
       const data = {
         labels: labels,
@@ -97,11 +101,11 @@ const MapaBrasil = () => {
           {
             label: 'Modelo Ensemble',
             data: [
-              evaluationMetrics.Ensemble.accuracy,
-              evaluationMetrics.Ensemble.precision,
-              evaluationMetrics.Ensemble.recall,
-              evaluationMetrics.Ensemble.f1_score,
-            ],
+              ensembleMetrics.accuracy,
+              ensembleMetrics.precision,
+              ensembleMetrics.recall,
+              ensembleMetrics.f1_score,
+            ].map(val => val !== null && val !== undefined ? parseFloat(val.toFixed(4)) : 0),
             backgroundColor: 'rgba(75, 192, 192, 0.6)',
             borderColor: 'rgba(75, 192, 192, 1)',
             borderWidth: 1,
@@ -109,11 +113,11 @@ const MapaBrasil = () => {
           {
             label: 'Random Forest',
             data: [
-              evaluationMetrics.Random_Forest.accuracy,
-              evaluationMetrics.Random_Forest.precision,
-              evaluationMetrics.Random_Forest.recall,
-              evaluationMetrics.Random_Forest.f1_score,
-            ],
+              rfMetrics.accuracy,
+              rfMetrics.precision,
+              rfMetrics.recall,
+              rfMetrics.f1_score,
+            ].map(val => val !== null && val !== undefined ? parseFloat(val.toFixed(4)) : 0),
             backgroundColor: 'rgba(153, 102, 255, 0.6)',
             borderColor: 'rgba(153, 102, 255, 1)',
             borderWidth: 1,
@@ -121,11 +125,11 @@ const MapaBrasil = () => {
           {
             label: 'XGBoost',
             data: [
-              evaluationMetrics.XGBoost.accuracy,
-              evaluationMetrics.XGBoost.precision,
-              evaluationMetrics.XGBoost.recall,
-              evaluationMetrics.XGBoost.f1_score,
-            ],
+              xgbMetrics.accuracy,
+              xgbMetrics.precision,
+              xgbMetrics.recall,
+              xgbMetrics.f1_score,
+            ].map(val => val !== null && val !== undefined ? parseFloat(val.toFixed(4)) : 0),
             backgroundColor: 'rgba(255, 159, 64, 0.6)',
             borderColor: 'rgba(255, 159, 64, 1)',
             borderWidth: 1,
@@ -133,11 +137,11 @@ const MapaBrasil = () => {
           {
             label: 'LSTM',
             data: [
-              evaluationMetrics.LSTM.accuracy,
-              evaluationMetrics.LSTM.precision,
-              evaluationMetrics.LSTM.recall,
-              evaluationMetrics.LSTM.f1_score,
-            ],
+              lstmMetrics.accuracy,
+              lstmMetrics.precision,
+              lstmMetrics.recall,
+              lstmMetrics.f1_score,
+            ].map(val => val !== null && val !== undefined ? parseFloat(val.toFixed(4)) : 0),
             backgroundColor: 'rgba(54, 162, 235, 0.6)',
             borderColor: 'rgba(54, 162, 235, 1)',
             borderWidth: 1,
@@ -161,18 +165,14 @@ const MapaBrasil = () => {
   const predict = async (municipio) => {
     setLoadingPrediction(true);
     setPredictionResult(null);
-    setMunicipioSelecionado(municipio); // Define o município selecionado
+    setMunicipioSelecionado(municipio);
 
     try {
-      const response = await axios.post(API_URL, {
-        municipio: municipio.nome,
+      const response = await axios.get(API_URL, {
+        params: { lat: municipio.lat, lon: municipio.lon }
       });
       setPredictionResult(response.data);
-      console.log('Dados de previsão:', response.data);
-
-      // Chamar a API de histórico se a previsão for bem-sucedida
-      fetchTimeSeriesData(municipio.nome);
-
+      fetchTimeSeriesData(municipio.lat, municipio.lon);
     } catch (error) {
       console.error('Erro na previsão:', error);
       if (error.response && error.response.data && error.response.data.detail) {
@@ -185,10 +185,10 @@ const MapaBrasil = () => {
     }
   };
 
-  const fetchTimeSeriesData = async (municipioNome) => {
+  const fetchTimeSeriesData = async (lat, lon) => {
     try {
-      const response = await axios.post(HISTORY_API_URL, {
-        municipio: municipioNome,
+      const response = await axios.get(HISTORY_API_URL, {
+        params: { lat: lat, lon: lon, limit: 30 }
       });
 
       if (response.data.noData) {
@@ -196,10 +196,9 @@ const MapaBrasil = () => {
         return;
       }
 
-      const history = response.data.history;
-
-      const labels = history.map(item => item.data_hora);
-      const dataPoints = history.map(item => item.probabilidade_enchente);
+      const history = response.data;
+      const labels = history.map(item => item.timestamp);
+      const dataPoints = history.map(item => item.probability);
 
       setTimeSeriesChartData({
         labels: labels,
@@ -287,22 +286,24 @@ const MapaBrasil = () => {
 
   return (
     <>
-      <Link to="/dicas" className="dicas-link">Dicas 🚨</Link>
       <MapContainer center={[-15.7797, -47.9297]} zoom={4} style={{ height: '100vh', width: '100vw' }}>
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         />
         <MarkerClusterGroup>
-          {Object.values(dados).map((municipio, index) => (
-            <Marker 
-              key={index} 
-              position={[municipio.lat, municipio.lon]} 
-              icon={defaultIcon}
-              eventHandlers={{
-                click: () => predict(municipio),
-              }}
-            />
+          {estacoes.map((municipio, index) => (
+            // Adicione a verificação para garantir que lat e lon existam
+            (municipio.lat && municipio.lon) ? (
+              <Marker 
+                key={index} 
+                position={[municipio.lat, municipio.lon]} 
+                icon={defaultIcon}
+                eventHandlers={{
+                  click: () => predict(municipio),
+                }}
+              />
+            ) : null
           ))}
         </MarkerClusterGroup>
       </MapContainer>
@@ -320,7 +321,7 @@ const MapaBrasil = () => {
             <p style={{ color: 'red' }}>{predictionResult.error}</p>
           ) : predictionResult ? (
             <>
-              <p>A probabilidade de enchente hoje é: <strong>{(predictionResult.probabilidade_enchente * 100).toFixed(2)}%</strong></p>
+              <p>A probabilidade de enchente hoje é: <strong>{(predictionResult.probabilidade * 100).toFixed(2)}%</strong></p>
               <div className="prediction-details">
                 <p>Temperatura: {predictionResult.dados_atuais.Temperatura}°C</p>
                 <p>Umidade: {predictionResult.dados_atuais.Umidade}%</p>
@@ -340,6 +341,7 @@ const MapaBrasil = () => {
                   <p>Não há dados históricos disponíveis ou ocorreu um erro.</p>
                 )}
               </div>
+              <Link to="/dicas" className="dicas-link">O que fazer em caso de enchente?</Link>
             </>
           ) : null }
         </div>
