@@ -1,0 +1,2 @@
+npm install react-leaflet leaflet axios react-leaflet-markercluster leaflet.markercluster react-router-dom lucide-react react-bootstrap bootstrap
+npm run dev

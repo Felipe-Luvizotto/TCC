@@ -1,23 +1,10 @@
 import os, joblib, torch, numpy as np, sqlite3
-# A linha abaixo importa as instâncias globais dos modelos
 from core.models import rf_model, xgb_model
-from core.treino_lstm import LSTMModel as lstm_model
+from core.model_lstm import LSTMModel as lstm_model
 from services.weather import get_weather_data
-
-# O BLOCO DE CÓDIGO ABAIXO FOI REMOVIDO PARA EVITAR ERROS NA INICIALIZAÇÃO:
-# try:
-#     lstm_model.load_state_dict(torch.load("modelo_lstm.pth"))
-#     rf_model = joblib.load("modelo_rf.pkl")
-#     xgb_model = joblib.load("modelo_xgb.pkl")
-#     lstm_model.eval()
-# except Exception as e:
-#     print(f"Erro ao carregar modelos: {e}")
+import json
 
 def predict_ensemble(municipio):
-    # O predict_ensemble AGORA USA as instâncias globais de modelo
-    # que foram carregadas pelo `lifespan` na inicialização.
-
-    # Abertura da conexão com o banco de dados dentro da função
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
 
@@ -38,17 +25,63 @@ def predict_ensemble(municipio):
     
     # Prepara os dados para os modelos
     data_rf_xgb = np.array([temp, humidity, wind, precipitation]).reshape(1, -1)
-    data_lstm = torch.tensor(data_rf_xgb.reshape(-1, 1, 4), dtype=torch.float32)
-
+    
     # Previsões individuais
     pred_rf = rf_model.predict_proba(data_rf_xgb)[0][1]
     pred_xgb = xgb_model.predict_proba(data_rf_xgb)[0][1]
     
+    # LSTM requer um tensor 3D
+    data_lstm = torch.tensor(data_rf_xgb.reshape(-1, 1, 4), dtype=torch.float32)
     with torch.no_grad():
         lstm_model.eval()
-        pred_lstm = torch.sigmoid(lstm_model(data_lstm)).item()
+        pred_lstm = lstm_model(data_lstm).item()
 
-    # Combinação das previsões (ensemble)
-    pred_final = (pred_lstm * 0.5) + (pred_rf * 0.3) + (pred_xgb * 0.2)
+    # Previsão final do ensemble (média das probabilidades)
+    ensemble_prediction = (pred_rf + pred_xgb + pred_lstm) / 3
 
-    return {"prediction": float(pred_final)}
+    # Define a probabilidade de enchente com base na previsão do ensemble
+    flood_probability = ensemble_prediction * 100 
+    flood_probability = min(100, max(0, flood_probability)) # Garante que o valor esteja entre 0 e 100
+
+    return {
+        "municipio": municipio,
+        "probabilidade_enchente": flood_probability,
+        "dados_atuais": {
+            "Temperatura": temp,
+            "Umidade": humidity,
+            "Vento": wind,
+            "Precipitacao": precipitation
+        }
+    }
+
+def predict_historical(municipio: str):
+    """
+    Busca o histórico de dados e previsões para um município no banco de dados.
+    """
+    print(f"DEBUG: Buscando histórico para {municipio}...")
+    try:
+        conn = sqlite3.connect('database.db')
+        df = pd.read_sql_query(
+            "SELECT data_hora, probabilidade FROM historico_previsao WHERE municipio = ? ORDER BY data_hora ASC",
+            conn,
+            params=(municipio,)
+        )
+        conn.close()
+
+        if df.empty:
+            print(f"AVISO: Nenhum dado histórico encontrado para {municipio}.")
+            return {"error": "Nenhum dado histórico encontrado."}
+
+        # Converte a coluna de data para o formato necessário pelo front-end
+        df['data_hora'] = pd.to_datetime(df['data_hora'])
+
+        # Prepara a resposta no formato JSON
+        historico = {
+            "labels": df['data_hora'].dt.strftime('%d/%m %Hh').tolist(),
+            "data": df['probabilidade'].tolist()
+        }
+        return {"historico": historico}
+
+    except Exception as e:
+        print(f"ERRO: Falha ao buscar histórico de previsões para {municipio}: {e}")
+        return {"error": "Falha interna ao carregar o histórico."}

@@ -1,90 +1,76 @@
-import numpy as np
-import time
-import sqlite3
-import joblib
 import pandas as pd
-from core.models import rf_model, xgb_model, lstm_model
-from core.treino_lstm import treinar_modelo_lstm
-from core.treino_xgb import treinar_modelo_xgb
-from core.evaluation import run_ensemble_evaluation
+import sqlite3
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
+from core.treino_rf import treinar_modelo_rf
+from core.treino_xgb import treinar_modelo_xgb
+from core.treino_lstm import treinar_modelo_lstm
+from core.evaluation import run_ensemble_evaluation
 
-def iniciar_treinamento_acelerado(num_ciclos=1, data_limit=5000):
+def ciclo_de_treinamento_acelerado():
     """
-    Roda um ciclo de treinamento e avaliação com dados históricos.
-    Args:
-        num_ciclos (int): Número de vezes para rodar o treinamento.
-        data_limit (int): Limite de linhas a serem lidas do banco de dados para um teste rápido.
-                          Use None para ler todos os dados.
+    Orquestra o processo de carregamento, divisão e treinamento dos modelos.
     """
     print("Iniciando o ciclo de treinamento acelerado...")
-    conn = sqlite3.connect("database.db")
 
     try:
-        # AQUI ESTÁ A OTIMIZAÇÃO: Adiciona a cláusula LIMIT para ler apenas uma amostra dos dados
-        query = "SELECT * FROM clima_historico"
-        if data_limit is not None and isinstance(data_limit, int) and data_limit > 0:
-            query += f" LIMIT {data_limit}"
-        
-        df = pd.read_sql_query(query, conn)
-        
-    except pd.io.sql.DatabaseError as e:
-        print(f"ERRO: Não foi possível carregar os dados do banco de dados. Verifique se o arquivo 'database.db' existe e a tabela 'clima_historico' está correta. Detalhes: {e}")
-        return
-    finally:
+        conn = sqlite3.connect('database.db')
+        df = pd.read_sql_query("SELECT temperatura, umidade, vento, precipitacao, enchente FROM clima", conn)
         conn.close()
+        
+        df.dropna(inplace=True)
 
-    if df.empty or len(df) < 50:
-        print("ERRO: Dados insuficientes para treinamento. Verifique a tabela 'clima_historico'.")
-        return
+        if len(df) < 20:
+            print("AVISO: Dados insuficientes no banco de dados para um treinamento significativo. Mínimo de 20 linhas.")
+            return
 
-    print(f"Dataset carregado com sucesso. Total de {df.shape[0]} linhas e {df.shape[1]} colunas.")
-    print("AVISO: Usando um subconjunto de dados para treinamento rápido. A precisão do modelo será reduzida.")
+        print(f"Dataset carregado com sucesso. Total de {len(df)} linhas e {len(df.columns)} colunas.")
+        print("AVISO: Usando um subconjunto de dados para treinamento rápido. A precisão do modelo será reduzida.")
 
-    # === 1. Prepara os dados para treinamento e teste ===
-    try:
-        X = df[['TEMPERATURA', 'UMIDADE', 'VENTO', 'PRECIPITACAO']].values
-        y = df['Enchente'].values
-    except KeyError as e:
-        print(f"ERRO: Coluna {e} não encontrada no seu dataset. Verifique os nomes das colunas.")
-        return
+        X = df.drop('enchente', axis=1)
+        y = df['enchente']
+        
+        # CORREÇÃO TEMPORÁRIA: Removido o stratify para permitir o treinamento
+        X_treino, X_teste, y_treino, y_teste = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        feature_columns = X.columns.tolist()
 
-    X_treino, X_teste, y_treino, y_teste = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    print(f"Dados divididos: {len(X_treino)} amostras para treino e {len(X_teste)} para teste.")
+        print("--- Treinamento 1/1 ---")
 
-    for ciclo in range(num_ciclos):
-        print(f"\n--- Iniciando Ciclo de Treinamento {ciclo + 1}/{num_ciclos} ---")
-
-        # === 2. Treina os modelos ===
+        # Chama a função de treinamento do Random Forest
         print("Treinando o modelo de Random Forest...")
-        rf_model_acelerado = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
-        rf_model_acelerado.fit(X_treino, y_treino)
-        joblib.dump(rf_model_acelerado, "modelo_rf.pkl")
+        treinar_modelo_rf(X_treino.values, y_treino.values)
         print("Treinamento do Random Forest concluído.")
 
+        # Chama a função de treinamento do XGBoost
         print("Treinando o modelo XGBoost...")
-        treinar_modelo_xgb(X_treino, y_treino)
+        treinar_modelo_xgb(X_treino.values, y_treino.values)
         print("Treinamento do XGBoost concluído.")
-
+        
+        # Chama a função de treinamento do LSTM
         print("Treinando o modelo LSTM...")
-        treinar_modelo_lstm(X_treino, y_treino)
+        treinar_modelo_lstm(X_treino.values, y_treino.values, feature_columns)
         print("Treinamento do LSTM concluído.")
 
-        print("--- Treinamento de todos os modelos concluído. ---")
+        print("--- Treinamento de todos os modelos concluído. ---\n")
 
-        # === 3. Avalia os modelos ===
         print("Iniciando a avaliação do ensemble...")
-        metrics = run_ensemble_evaluation(X_teste, y_teste)
-
-        if metrics:
-            print("Avaliação completa:")
-            for model_name, model_metrics in metrics.items():
-                print(f"  Métricas para {model_name}:")
-                for key, value in model_metrics.items():
-                    print(f"    - {key}: {value:.4f}")
+        metricas = run_ensemble_evaluation(X_teste.values, y_teste.values)
+        if metricas:
+            print("Avaliação concluída com sucesso:")
+            for model_name, m in metricas.items():
+                print(f"\n--- Métricas para {model_name} ---")
+                print(f"  Acurácia: {m['accuracy']:.4f}")
+                print(f"  Precisão: {m['precision']:.4f}")
+                print(f"  Recall: {m['recall']:.4f}")
+                print(f"  F1-Score: {m['f1_score']:.4f}")
+                print(f"  AUC-ROC: {m['auc_roc']:.4f}")
         else:
-            print("AVISO: Avaliação não foi executada.")
+            print("AVISO: Não foi possível realizar a avaliação do modelo.")
+            
+    except FileNotFoundError as e:
+        print(f"ERRO: Arquivo não encontrado. Verifique os caminhos dos arquivos: {e}")
+    except Exception as e:
+        print(f"Ocorreu um erro no ciclo de treinamento: {e}")
 
 if __name__ == "__main__":
-    iniciar_treinamento_acelerado(num_ciclos=1, data_limit=5000) # Use 5000 para um teste inicial
+    ciclo_de_treinamento_acelerado()
