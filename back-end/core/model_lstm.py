@@ -1,8 +1,9 @@
+# --- START OF FILE model_lstm.py ---
 import torch
 import torch.nn as nn
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size=4, hidden_size=32, num_layers=1): # Ajustes aqui
+    def __init__(self, input_size=4, hidden_size=32, num_layers=1):
         super(LSTMModel, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -14,4 +15,4 @@ class LSTMModel(nn.Module):
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         out, _ = self.lstm(x, (h0, c0))
         out = self.fc(out[:, -1, :])
-        return torch.sigmoid(out)
+        return torch.sigmoid(out) # Já está correto para a BCELoss

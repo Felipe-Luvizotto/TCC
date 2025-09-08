@@ -1,3 +1,4 @@
+# --- START OF FILE treinamento_acelerado.py ---
 import pandas as pd
 import sqlite3
 from sklearn.model_selection import train_test_split
@@ -5,6 +6,7 @@ from core.treino_rf import treinar_modelo_rf
 from core.treino_xgb import treinar_modelo_xgb
 from core.treino_lstm import treinar_modelo_lstm
 from core.evaluation import run_ensemble_evaluation
+import numpy as np # Importar numpy para checagem
 
 def ciclo_de_treinamento_acelerado():
     """
@@ -14,23 +16,32 @@ def ciclo_de_treinamento_acelerado():
 
     try:
         conn = sqlite3.connect('database.db')
-        df = pd.read_sql_query("SELECT temperatura, umidade, vento, precipitacao, enchente FROM clima", conn)
+        # Seleciona as colunas esperadas pelos modelos (Temperatura, Umidade, Vento, Precipitacao)
+        df = pd.read_sql_query("SELECT Temperatura, Umidade, Vento, Precipitacao, Enchente FROM clima", conn)
         conn.close()
         
         df.dropna(inplace=True)
 
         if len(df) < 20:
-            print("AVISO: Dados insuficientes no banco de dados para um treinamento significativo. Mínimo de 20 linhas.")
+            print(f"AVISO: Dados insuficientes no banco de dados para um treinamento significativo. Mínimo de 20 linhas. Atualmente: {len(df)}")
+            return
+
+        # Verifica se ambas as classes (0 e 1 para 'Enchente') estão presentes
+        if len(df['Enchente'].unique()) < 2:
+            print("AVISO: A coluna 'Enchente' não contém ambas as classes (0 e 1). Não é possível realizar um split estratificado ou treinar corretamente.")
+            print(f"Valores únicos em 'Enchente': {df['Enchente'].unique()}")
+            # Se só houver uma classe, talvez ainda possamos treinar, mas não estratificar
+            # Por enquanto, vamos retornar se não houver diversidade de classes
             return
 
         print(f"Dataset carregado com sucesso. Total de {len(df)} linhas e {len(df.columns)} colunas.")
         print("AVISO: Usando um subconjunto de dados para treinamento rápido. A precisão do modelo será reduzida.")
 
-        X = df.drop('enchente', axis=1)
-        y = df['enchente']
+        X = df.drop('Enchente', axis=1) # Usar 'Enchente' conforme o nome da coluna
+        y = df['Enchente']
         
-        # CORREÇÃO TEMPORÁRIA: Removido o stratify para permitir o treinamento
-        X_treino, X_teste, y_treino, y_teste = train_test_split(X, y, test_size=0.2, random_state=42)
+        # Correção: Usar stratify se ambas as classes estiverem presentes
+        X_treino, X_teste, y_treino, y_teste = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
         
         feature_columns = X.columns.tolist()
 
@@ -63,7 +74,9 @@ def ciclo_de_treinamento_acelerado():
                 print(f"  Precisão: {m['precision']:.4f}")
                 print(f"  Recall: {m['recall']:.4f}")
                 print(f"  F1-Score: {m['f1_score']:.4f}")
-                print(f"  AUC-ROC: {m['auc_roc']:.4f}")
+                # Verifica se 'auc_roc' existe antes de tentar formatar
+                if 'auc_roc' in m:
+                    print(f"  AUC-ROC: {m['auc_roc']:.4f}")
         else:
             print("AVISO: Não foi possível realizar a avaliação do modelo.")
             
